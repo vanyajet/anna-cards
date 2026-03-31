@@ -8,7 +8,7 @@ import { Navbar } from "@/components/Navbar";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "ANN Открытки",
+  title: "Anna Cards - Интерактивные открытки на блокчейне Solana",
   description: "Отправляйте открытки на блокчейне с токенами $ANN в сети Solana",
 };
 

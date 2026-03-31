@@ -11,7 +11,7 @@ export default async function SignInPage() {
       <div className="bg-white/10 backdrop-blur border border-white/20 rounded-2xl p-8 w-full max-w-md">
         <div className="text-center mb-8">
           <div className="text-4xl mb-3">🎁</div>
-          <h1 className="text-2xl font-bold text-white">Войти в ANN Открытки</h1>
+          <h1 className="text-2xl font-bold text-white">Войти в Anna Cards</h1>
           <p className="text-indigo-300 mt-2 text-sm">
             Используйте Google или email для входа
           </p>
