@@ -10,7 +10,7 @@ echo "==> Generating Prisma client..."
 npm run db:generate
 
 echo "==> Running DB migrations..."
-npm run db:migrate
+npx prisma migrate deploy
 
 echo "==> Building Next.js..."
 npm run build
