@@ -254,7 +254,7 @@ export function CreateWizard({ walletAddress }: { walletAddress: string | null }
           maxLength={100}
           value={recipientName}
           onChange={(e) => setRecipientName(e.target.value)}
-          placeholder="Напр. Маша"
+          placeholder="Напр. Анна, Папа, Бабушка…"
           className="w-full bg-white/10 border border-white/20 rounded-xl px-4 py-3 text-white placeholder-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-400"
         />
       </div>
