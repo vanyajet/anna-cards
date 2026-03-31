@@ -19,7 +19,7 @@ export function Navbar() {
         {/* Logo */}
         <Link href="/" className="flex items-center gap-2 text-white font-bold text-lg">
           <span>🎁</span>
-          <span className="hidden sm:inline tracking-wide">ANN Открытки</span>
+          <span className="hidden sm:inline tracking-wide">Anna Cards</span>
         </Link>
 
         {/* Nav links — only shown when logged in */}
