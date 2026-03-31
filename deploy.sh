@@ -4,7 +4,7 @@
 set -e
 
 echo "==> Installing dependencies..."
-npm ci --omit=dev
+npm ci
 
 echo "==> Generating Prisma client..."
 npm run db:generate
