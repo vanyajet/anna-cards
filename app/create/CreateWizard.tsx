@@ -46,9 +46,10 @@ type Mode = "FREE" | "CRYPTO";
 // MIME types the server accepts as-is (no canvas needed).
 const PASS_THROUGH_TYPES = new Set(["image/jpeg", "image/jpg", "image/png", "image/webp"]);
 // Must stay in sync with MAX_FILE_SIZE in the API route.
-const SERVER_MAX_BYTES = 10 * 1024 * 1024; // 10 MB
+const SERVER_MAX_BYTES = 30 * 1024 * 1024; // 30 MB
 
-// Canvas-based conversion for HEIC/HEIF/oversized images.
+// Canvas-based format conversion for HEIC/HEIF and other non-standard types.
+// Keeps the original resolution — no downscaling.
 // Returns a raw Blob (not File) to avoid the iOS WebKit bug where
 // new File([canvasBlob]) inside fetch(FormData) throws
 // "The string did not match the expected pattern".
@@ -58,15 +59,9 @@ async function compressToBlob(file: File | Blob): Promise<Blob | null> {
     const url = URL.createObjectURL(file);
     img.onload = () => {
       URL.revokeObjectURL(url);
-      const w0 = img.naturalWidth, h0 = img.naturalHeight;
+      const w = img.naturalWidth, h = img.naturalHeight;
       // Guard against images that report 0 dimensions (some Android WebViews)
-      if (!w0 || !h0) { resolve(null); return; }
-      const MAX = 1600;
-      let w = w0, h = h0;
-      if (w > MAX || h > MAX) {
-        if (w > h) { h = Math.round(h * MAX / w); w = MAX; }
-        else { w = Math.round(w * MAX / h); h = MAX; }
-      }
+      if (!w || !h) { resolve(null); return; }
       const canvas = document.createElement("canvas");
       canvas.width = w;
       canvas.height = h;
@@ -74,7 +69,7 @@ async function compressToBlob(file: File | Blob): Promise<Blob | null> {
       if (!ctx) { resolve(null); return; }
       ctx.drawImage(img, 0, 0, w, h);
       try {
-        canvas.toBlob((blob) => resolve(blob), "image/jpeg", 0.85);
+        canvas.toBlob((blob) => resolve(blob), "image/jpeg", 0.92);
       } catch {
         resolve(null);
       }
@@ -124,8 +119,8 @@ export function CreateWizard({ walletAddress }: { walletAddress: string | null }
       setError("Пожалуйста, выберите файл изображения");
       return;
     }
-    if (file.size > 20 * 1024 * 1024) {
-      setError("Файл слишком большой. Максимум 20 МБ");
+    if (file.size > 30 * 1024 * 1024) {
+      setError("Файл слишком большой. Максимум 30 МБ");
       return;
     }
 
@@ -385,7 +380,7 @@ export function CreateWizard({ walletAddress }: { walletAddress: string | null }
               ) : (
                 <>
                   <div className="text-3xl mb-2">📷</div>
-                  <p className="text-indigo-300 text-sm">Нажмите для загрузки (JPEG, PNG, WebP — макс. 5 МБ)</p>
+                  <p className="text-indigo-300 text-sm">Нажмите для загрузки (JPEG, PNG, WebP, HEIC — макс. 30 МБ)</p>
                 </>
               )}
             </div>

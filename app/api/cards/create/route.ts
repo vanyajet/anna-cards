@@ -23,7 +23,7 @@ const ALLOWED_MIME = new Set([
   "image/bmp",
   "image/tiff",
 ]);
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB (raw, before client compression)
+const MAX_FILE_SIZE = 30 * 1024 * 1024; // 30MB — accepts all phone photo resolutions
 
 const baseSchema = z.object({
   mode: z.enum(["FREE", "CRYPTO"]).default("CRYPTO"),
@@ -64,7 +64,7 @@ export async function POST(req: NextRequest) {
     for (const [key, value] of formData.entries()) {
       if (key === "photo" && value instanceof File) {
         if (value.size > MAX_FILE_SIZE) {
-          return NextResponse.json({ error: "Photo exceeds 10MB limit" }, { status: 400 });
+          return NextResponse.json({ error: "Photo exceeds 30MB limit" }, { status: 400 });
         }
         // Normalize non-standard MIME type variants
         const normalizedType = value.type === "image/jpg" ? "image/jpeg" : value.type;
