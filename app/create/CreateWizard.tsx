@@ -43,15 +43,26 @@ const EMOJI_OPTIONS = ["🎉", "❤️", "🌟", "🎂", "🥂", "🎁", "💐",
 
 type Mode = "FREE" | "CRYPTO";
 
-// Converts any browser-renderable image (JPEG, PNG, WebP, HEIC on Safari/iOS, etc.)
-// to a compressed JPEG File, resized to max 1600px on longest side.
-async function compressImage(file: File): Promise<File | null> {
+// MIME types the server accepts as-is (no canvas needed).
+const PASS_THROUGH_TYPES = new Set(["image/jpeg", "image/jpg", "image/png", "image/webp"]);
+// Must stay in sync with MAX_FILE_SIZE in the API route.
+const SERVER_MAX_BYTES = 10 * 1024 * 1024; // 10 MB
+
+// Canvas-based conversion for HEIC/HEIF/oversized images.
+// Returns a raw Blob (not File) to avoid the iOS WebKit bug where
+// new File([canvasBlob]) inside fetch(FormData) throws
+// "The string did not match the expected pattern".
+async function compressToBlob(file: File | Blob): Promise<Blob | null> {
   return new Promise((resolve) => {
     const img = new Image();
     const url = URL.createObjectURL(file);
     img.onload = () => {
+      URL.revokeObjectURL(url);
+      const w0 = img.naturalWidth, h0 = img.naturalHeight;
+      // Guard against images that report 0 dimensions (some Android WebViews)
+      if (!w0 || !h0) { resolve(null); return; }
       const MAX = 1600;
-      let w = img.naturalWidth, h = img.naturalHeight;
+      let w = w0, h = h0;
       if (w > MAX || h > MAX) {
         if (w > h) { h = Math.round(h * MAX / w); w = MAX; }
         else { w = Math.round(w * MAX / h); h = MAX; }
@@ -60,16 +71,13 @@ async function compressImage(file: File): Promise<File | null> {
       canvas.width = w;
       canvas.height = h;
       const ctx = canvas.getContext("2d");
-      if (!ctx) { URL.revokeObjectURL(url); resolve(null); return; }
+      if (!ctx) { resolve(null); return; }
       ctx.drawImage(img, 0, 0, w, h);
-      canvas.toBlob(
-        (blob) => {
-          URL.revokeObjectURL(url);
-          resolve(blob ? new File([blob], "photo.jpg", { type: "image/jpeg" }) : null);
-        },
-        "image/jpeg",
-        0.85
-      );
+      try {
+        canvas.toBlob((blob) => resolve(blob), "image/jpeg", 0.85);
+      } catch {
+        resolve(null);
+      }
     };
     img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
     img.src = url;
@@ -90,7 +98,8 @@ export function CreateWizard({ walletAddress }: { walletAddress: string | null }
   const [background, setBackground] = useState(BACKGROUNDS_T1[0]);
   const [selectedEmojis, setSelectedEmojis] = useState<string[]>([]);
   const [musicTrack, setMusicTrack] = useState("");
-  const [photo, setPhoto] = useState<File | null>(null);
+  // Blob covers both native File (from input) and canvas-converted Blob.
+  const [photo, setPhoto] = useState<Blob | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
@@ -110,28 +119,45 @@ export function CreateWizard({ walletAddress }: { walletAddress: string | null }
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // Accept any image type (JPEG, PNG, WebP, HEIC on Safari/iOS, HEIF, etc.)
-    // Reject clearly non-image files
+    // Reject clearly non-image files (empty type is OK — some HEIC files have no type on iOS)
     if (file.type && !file.type.startsWith("image/")) {
       setError("Пожалуйста, выберите файл изображения");
       return;
     }
-    // Raw file size guard before processing (20MB max raw)
     if (file.size > 20 * 1024 * 1024) {
       setError("Файл слишком большой. Максимум 20 МБ");
       return;
     }
 
     setError("");
+
+    // ── Fast path ─────────────────────────────────────────────────────────────
+    // For standard formats under the server size limit, use the original File
+    // directly — no canvas, no new File(), no mobile-browser compatibility risk.
+    if (PASS_THROUGH_TYPES.has(file.type) && file.size <= SERVER_MAX_BYTES) {
+      setPhoto(file);
+      setPhotoPreview(URL.createObjectURL(file));
+      return;
+    }
+
+    // ── Canvas path ───────────────────────────────────────────────────────────
+    // For HEIC/HEIF, oversized files, or unknown formats — try canvas conversion.
     try {
-      const converted = await compressImage(file);
-      if (!converted) {
-        // Browser can't render this format (e.g. HEIC on Chrome/Firefox desktop)
-        setError("Ваш браузер не может обработать этот формат. Попробуйте JPEG или PNG, либо откройте страницу в Safari.");
+      const blob = await compressToBlob(file);
+      if (!blob) {
+        // Canvas couldn't decode this format (e.g. HEIC on Chrome/Firefox desktop).
+        // If it's a standard format that was just oversized, let the server reject
+        // it with a proper JSON error rather than silently failing here.
+        if (PASS_THROUGH_TYPES.has(file.type)) {
+          setPhoto(file);
+          setPhotoPreview(URL.createObjectURL(file));
+        } else {
+          setError("Ваш браузер не может обработать этот формат. Попробуйте JPEG или PNG, либо откройте страницу в Safari.");
+        }
         return;
       }
-      setPhoto(converted);
-      setPhotoPreview(URL.createObjectURL(converted));
+      setPhoto(blob);
+      setPhotoPreview(URL.createObjectURL(blob));
     } catch {
       setError("Не удалось загрузить изображение. Попробуйте другой формат.");
     }
@@ -149,7 +175,7 @@ export function CreateWizard({ walletAddress }: { walletAddress: string | null }
     setError("");
     try {
       let body: FormData | string;
-      let headers: Record<string, string> = {};
+      const headers: Record<string, string> = {};
 
       if (effectiveTier === 2 && photo) {
         const fd = new FormData();
@@ -160,7 +186,10 @@ export function CreateWizard({ walletAddress }: { walletAddress: string | null }
         fd.append("background", background);
         fd.append("emojis", selectedEmojis.join(","));
         fd.append("musicTrack", musicTrack);
-        fd.append("photo", photo);
+        // 3-arg form (name, blob, filename) is required on iOS Safari when the
+        // Blob was not sourced directly from a file input — avoids WebKit's
+        // "The string did not match the expected pattern" fetch error.
+        fd.append("photo", photo, "photo.jpg");
         body = fd;
       } else {
         headers["Content-Type"] = "application/json";
@@ -220,7 +249,7 @@ export function CreateWizard({ walletAddress }: { walletAddress: string | null }
       await connection.confirmTransaction({ signature: txSig, blockhash, lastValidBlockHeight }, "confirmed");
 
       let body: FormData | string;
-      let headers: Record<string, string> = {};
+      const headers: Record<string, string> = {};
 
       if (tier === 2 && photo) {
         const fd = new FormData();
@@ -233,7 +262,7 @@ export function CreateWizard({ walletAddress }: { walletAddress: string | null }
         fd.append("emojis", selectedEmojis.join(","));
         fd.append("musicTrack", musicTrack);
         if (memoText) fd.append("memoText", memoText);
-        fd.append("photo", photo);
+        fd.append("photo", photo, "photo.jpg");
         body = fd;
       } else {
         headers["Content-Type"] = "application/json";
