@@ -11,8 +11,19 @@ import fs from "fs/promises";
 import path from "path";
 import { randomUUID } from "crypto";
 
-const ALLOWED_MIME = new Set(["image/jpeg", "image/png", "image/webp"]);
-const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+// Accept common MIME types including non-standard variants from Android/iOS.
+// The client compresses everything to image/jpeg before upload, but we keep
+// the broader list as a server-side safety net.
+const ALLOWED_MIME = new Set([
+  "image/jpeg", "image/jpg",   // standard + non-standard JPG
+  "image/png",
+  "image/webp",
+  "image/heic", "image/heif",  // iPhone HEIC (passed through when browser supports it)
+  "image/gif",
+  "image/bmp",
+  "image/tiff",
+]);
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB (raw, before client compression)
 
 const baseSchema = z.object({
   mode: z.enum(["FREE", "CRYPTO"]).default("CRYPTO"),
@@ -28,6 +39,7 @@ const baseSchema = z.object({
 });
 
 export async function POST(req: NextRequest) {
+  try {
   const session = await auth();
   if (!session?.user?.id) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -43,23 +55,34 @@ export async function POST(req: NextRequest) {
   const contentType = req.headers.get("content-type") ?? "";
 
   if (contentType.includes("multipart/form-data")) {
-    const formData = await req.formData();
+    let formData: FormData;
+    try {
+      formData = await req.formData();
+    } catch {
+      return NextResponse.json({ error: "Failed to parse form data. File may be too large or corrupted." }, { status: 413 });
+    }
     for (const [key, value] of formData.entries()) {
       if (key === "photo" && value instanceof File) {
         if (value.size > MAX_FILE_SIZE) {
-          return NextResponse.json({ error: "Photo exceeds 5MB limit" }, { status: 400 });
+          return NextResponse.json({ error: "Photo exceeds 10MB limit" }, { status: 400 });
         }
-        if (!ALLOWED_MIME.has(value.type)) {
-          return NextResponse.json({ error: "Only JPEG, PNG, and WebP images are allowed" }, { status: 400 });
+        // Normalize non-standard MIME type variants
+        const normalizedType = value.type === "image/jpg" ? "image/jpeg" : value.type;
+        if (!ALLOWED_MIME.has(normalizedType)) {
+          return NextResponse.json({ error: "Unsupported image format. Use JPEG, PNG, WebP, or HEIC." }, { status: 400 });
         }
         photoBuffer = Buffer.from(await value.arrayBuffer());
-        photoMime = value.type;
+        photoMime = normalizedType || "image/jpeg";
       } else if (typeof value === "string") {
         fields[key] = value;
       }
     }
   } else {
-    fields = await req.json();
+    try {
+      fields = await req.json();
+    } catch {
+      return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+    }
   }
 
   const parsed = baseSchema.safeParse({ ...fields, tier: Number(fields.tier) });
@@ -148,4 +171,8 @@ export async function POST(req: NextRequest) {
   });
 
   return NextResponse.json({ slug: card.slug });
+  } catch (err) {
+    console.error("[cards/create] Unhandled error:", err);
+    return NextResponse.json({ error: "Internal server error. Please try again." }, { status: 500 });
+  }
 }
