@@ -43,6 +43,39 @@ const EMOJI_OPTIONS = ["🎉", "❤️", "🌟", "🎂", "🥂", "🎁", "💐",
 
 type Mode = "FREE" | "CRYPTO";
 
+// Converts any browser-renderable image (JPEG, PNG, WebP, HEIC on Safari/iOS, etc.)
+// to a compressed JPEG File, resized to max 1600px on longest side.
+async function compressImage(file: File): Promise<File | null> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const MAX = 1600;
+      let w = img.naturalWidth, h = img.naturalHeight;
+      if (w > MAX || h > MAX) {
+        if (w > h) { h = Math.round(h * MAX / w); w = MAX; }
+        else { w = Math.round(w * MAX / h); h = MAX; }
+      }
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) { URL.revokeObjectURL(url); resolve(null); return; }
+      ctx.drawImage(img, 0, 0, w, h);
+      canvas.toBlob(
+        (blob) => {
+          URL.revokeObjectURL(url);
+          resolve(blob ? new File([blob], "photo.jpg", { type: "image/jpeg" }) : null);
+        },
+        "image/jpeg",
+        0.85
+      );
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
+    img.src = url;
+  });
+}
+
 export function CreateWizard({ walletAddress }: { walletAddress: string | null }) {
   const router = useRouter();
   const { connection } = useConnection();
@@ -73,16 +106,35 @@ export function CreateWizard({ walletAddress }: { walletAddress: string | null }
   const totalSteps = 3;
   const stepLabels = ["Выбор уровня", "Детали открытки", "Проверка и отправка"];
 
-  function handlePhotoChange(e: React.ChangeEvent<HTMLInputElement>) {
+  async function handlePhotoChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (file.size > 5 * 1024 * 1024) { setError("Фото должно быть менее 5 МБ"); return; }
-    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
-      setError("Разрешены только JPEG, PNG или WebP"); return;
+
+    // Accept any image type (JPEG, PNG, WebP, HEIC on Safari/iOS, HEIF, etc.)
+    // Reject clearly non-image files
+    if (file.type && !file.type.startsWith("image/")) {
+      setError("Пожалуйста, выберите файл изображения");
+      return;
     }
-    setPhoto(file);
-    setPhotoPreview(URL.createObjectURL(file));
+    // Raw file size guard before processing (20MB max raw)
+    if (file.size > 20 * 1024 * 1024) {
+      setError("Файл слишком большой. Максимум 20 МБ");
+      return;
+    }
+
     setError("");
+    try {
+      const converted = await compressImage(file);
+      if (!converted) {
+        // Browser can't render this format (e.g. HEIC on Chrome/Firefox desktop)
+        setError("Ваш браузер не может обработать этот формат. Попробуйте JPEG или PNG, либо откройте страницу в Safari.");
+        return;
+      }
+      setPhoto(converted);
+      setPhotoPreview(URL.createObjectURL(converted));
+    } catch {
+      setError("Не удалось загрузить изображение. Попробуйте другой формат.");
+    }
   }
 
   function selectMode(m: Mode) {
@@ -123,8 +175,9 @@ export function CreateWizard({ walletAddress }: { walletAddress: string | null }
       }
 
       const res = await fetch("/api/cards/create", { method: "POST", headers, body });
-      const data = await res.json();
-      if (!res.ok) { setError(data.error ?? "Не удалось создать открытку"); return; }
+      let data: { error?: string; slug?: string } = {};
+      try { data = await res.json(); } catch { /* non-JSON response (e.g. HTML 500/413) */ }
+      if (!res.ok) { setError(data.error ?? "Не удалось создать открытку. Попробуйте ещё раз."); return; }
       router.push(`/card/${data.slug}?created=1`);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Неизвестная ошибка");
@@ -188,8 +241,9 @@ export function CreateWizard({ walletAddress }: { walletAddress: string | null }
       }
 
       const res = await fetch("/api/cards/create", { method: "POST", headers, body });
-      const data = await res.json();
-      if (!res.ok) { setError(data.error ?? "Не удалось создать открытку"); return; }
+      let data: { error?: string; slug?: string } = {};
+      try { data = await res.json(); } catch { /* non-JSON response (e.g. HTML 500/413) */ }
+      if (!res.ok) { setError(data.error ?? "Не удалось создать открытку. Попробуйте ещё раз."); return; }
       router.push(`/card/${data.slug}?created=1`);
     } catch (err: unknown) {
       setError(`Транзакция не удалась: ${err instanceof Error ? err.message : "Неизвестная ошибка"}`);
@@ -309,7 +363,7 @@ export function CreateWizard({ walletAddress }: { walletAddress: string | null }
             <input
               ref={fileInputRef}
               type="file"
-              accept="image/jpeg,image/png,image/webp"
+              accept="image/*"
               className="hidden"
               onChange={handlePhotoChange}
             />
