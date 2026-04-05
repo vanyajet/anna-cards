@@ -43,42 +43,6 @@ const EMOJI_OPTIONS = ["🎉", "❤️", "🌟", "🎂", "🥂", "🎁", "💐",
 
 type Mode = "FREE" | "CRYPTO";
 
-// MIME types the server accepts as-is (no canvas needed).
-const PASS_THROUGH_TYPES = new Set(["image/jpeg", "image/jpg", "image/png", "image/webp"]);
-// Must stay in sync with MAX_FILE_SIZE in the API route.
-const SERVER_MAX_BYTES = 30 * 1024 * 1024; // 30 MB
-
-// Canvas-based format conversion for HEIC/HEIF and other non-standard types.
-// Keeps the original resolution — no downscaling.
-// Returns a raw Blob (not File) to avoid the iOS WebKit bug where
-// new File([canvasBlob]) inside fetch(FormData) throws
-// "The string did not match the expected pattern".
-async function compressToBlob(file: File | Blob): Promise<Blob | null> {
-  return new Promise((resolve) => {
-    const img = new Image();
-    const url = URL.createObjectURL(file);
-    img.onload = () => {
-      URL.revokeObjectURL(url);
-      const w = img.naturalWidth, h = img.naturalHeight;
-      // Guard against images that report 0 dimensions (some Android WebViews)
-      if (!w || !h) { resolve(null); return; }
-      const canvas = document.createElement("canvas");
-      canvas.width = w;
-      canvas.height = h;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) { resolve(null); return; }
-      ctx.drawImage(img, 0, 0, w, h);
-      try {
-        canvas.toBlob((blob) => resolve(blob), "image/jpeg", 0.92);
-      } catch {
-        resolve(null);
-      }
-    };
-    img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
-    img.src = url;
-  });
-}
-
 export function CreateWizard({ walletAddress }: { walletAddress: string | null }) {
   const router = useRouter();
   const { connection } = useConnection();
@@ -93,8 +57,7 @@ export function CreateWizard({ walletAddress }: { walletAddress: string | null }
   const [background, setBackground] = useState(BACKGROUNDS_T1[0]);
   const [selectedEmojis, setSelectedEmojis] = useState<string[]>([]);
   const [musicTrack, setMusicTrack] = useState("");
-  // Blob covers both native File (from input) and canvas-converted Blob.
-  const [photo, setPhoto] = useState<Blob | null>(null);
+  const [photo, setPhoto] = useState<File | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
@@ -110,52 +73,20 @@ export function CreateWizard({ walletAddress }: { walletAddress: string | null }
   const totalSteps = 3;
   const stepLabels = ["Выбор уровня", "Детали открытки", "Проверка и отправка"];
 
-  async function handlePhotoChange(e: React.ChangeEvent<HTMLInputElement>) {
+  function handlePhotoChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
-
-    // Reject clearly non-image files (empty type is OK — some HEIC files have no type on iOS)
     if (file.type && !file.type.startsWith("image/")) {
       setError("Пожалуйста, выберите файл изображения");
       return;
     }
-    if (file.size > 30 * 1024 * 1024) {
-      setError("Файл слишком большой. Максимум 30 МБ");
+    if (file.size > 50 * 1024 * 1024) {
+      setError("Файл слишком большой. Максимум 50 МБ");
       return;
     }
-
+    setPhoto(file);
+    setPhotoPreview(URL.createObjectURL(file));
     setError("");
-
-    // ── Fast path ─────────────────────────────────────────────────────────────
-    // For standard formats under the server size limit, use the original File
-    // directly — no canvas, no new File(), no mobile-browser compatibility risk.
-    if (PASS_THROUGH_TYPES.has(file.type) && file.size <= SERVER_MAX_BYTES) {
-      setPhoto(file);
-      setPhotoPreview(URL.createObjectURL(file));
-      return;
-    }
-
-    // ── Canvas path ───────────────────────────────────────────────────────────
-    // For HEIC/HEIF, oversized files, or unknown formats — try canvas conversion.
-    try {
-      const blob = await compressToBlob(file);
-      if (!blob) {
-        // Canvas couldn't decode this format (e.g. HEIC on Chrome/Firefox desktop).
-        // If it's a standard format that was just oversized, let the server reject
-        // it with a proper JSON error rather than silently failing here.
-        if (PASS_THROUGH_TYPES.has(file.type)) {
-          setPhoto(file);
-          setPhotoPreview(URL.createObjectURL(file));
-        } else {
-          setError("Ваш браузер не может обработать этот формат. Попробуйте JPEG или PNG, либо откройте страницу в Safari.");
-        }
-        return;
-      }
-      setPhoto(blob);
-      setPhotoPreview(URL.createObjectURL(blob));
-    } catch {
-      setError("Не удалось загрузить изображение. Попробуйте другой формат.");
-    }
   }
 
   function selectMode(m: Mode) {
@@ -380,7 +311,7 @@ export function CreateWizard({ walletAddress }: { walletAddress: string | null }
               ) : (
                 <>
                   <div className="text-3xl mb-2">📷</div>
-                  <p className="text-indigo-300 text-sm">Нажмите для загрузки (JPEG, PNG, WebP, HEIC — макс. 30 МБ)</p>
+                  <p className="text-indigo-300 text-sm">Нажмите для загрузки (JPEG, PNG, WebP, HEIC — макс. 50 МБ)</p>
                 </>
               )}
             </div>

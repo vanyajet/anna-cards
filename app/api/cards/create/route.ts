@@ -11,17 +11,13 @@ import fs from "fs/promises";
 import path from "path";
 import { randomUUID } from "crypto";
 
-// Accept common MIME types including non-standard variants from Android/iOS.
 const ALLOWED_MIME = new Set([
-  "image/jpeg", "image/jpg",
+  "image/jpeg", "image/jpg", // image/jpg is non-standard but some Android browsers send it
   "image/png",
   "image/webp",
-  "image/heic", "image/heif",
-  "image/gif",
-  "image/bmp",
-  "image/tiff",
+  "image/heic", "image/heif", // iOS Safari passes these through
 ]);
-const MAX_FILE_SIZE = 30 * 1024 * 1024; // 30MB
+const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB (Nginx allows 50m)
 
 const baseSchema = z.object({
   mode: z.enum(["FREE", "CRYPTO"]).default("CRYPTO"),
@@ -91,7 +87,7 @@ export async function POST(req: NextRequest) {
           log(reqId, `  photo: name="${value.name}" size=${value.size}B type="${value.type}"`);
           if (value.size > MAX_FILE_SIZE) {
             log(reqId, `✗ photo too large: ${value.size}B > ${MAX_FILE_SIZE}B`);
-            return NextResponse.json({ error: "Photo exceeds 30MB limit" }, { status: 400 });
+            return NextResponse.json({ error: "Photo exceeds 50MB limit" }, { status: 400 });
           }
           const normalizedType = value.type === "image/jpg" ? "image/jpeg" : value.type;
           if (!ALLOWED_MIME.has(normalizedType)) {
